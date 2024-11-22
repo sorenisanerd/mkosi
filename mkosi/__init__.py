@@ -2046,7 +2046,8 @@ def install_type1(
             and not any(c.startswith("mount.usr=PARTUUID=") for c in context.config.kernel_command_line)
             and (root := finalize_root(partitions))
         ):
-            cmdline = [root] + cmdline
+            if root not in cmdline:
+                cmdline = [root] + cmdline
 
         with config.open("a") as f:
             f.write("if [ ")
