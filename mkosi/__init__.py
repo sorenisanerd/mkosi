@@ -2011,7 +2011,10 @@ def install_type1(
 
         initrds = [
             Path(shutil.copy2(initrd, dst.parent / initrd.name)) for initrd in microcode + initrds
-        ] + [Path(shutil.copy2(kmods, dst / "kernel-modules.initrd"))]
+        ]
+
+        if context.config.kernel_modules_initrd:
+            initrds += [Path(shutil.copy2(kmods, dst / "kernel-modules.initrd"))]
 
         if dtb:
             shutil.copy2(find_devicetree(context, kver), dtb)
