@@ -38,6 +38,7 @@ class INVOKING_USER:
         else:
             d = Path("/run")
 
+        d.mkdir(parents=True, exist_ok=True)
         return d
 
     @classmethod
