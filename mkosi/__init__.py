@@ -4046,13 +4046,14 @@ def build_image(context: Context) -> None:
 
     clean_package_manager_metadata(context)
     remove_files(context)
-    run_finalize_scripts(context)
 
     rmtree(context.root / "work")
 
     normalize_mtime(context.root, context.config.source_date_epoch)
     partitions = make_disk(context, skip=("esp", "xbootldr"), tabs=True, msg="Generating disk image")
     install_kernel(context, partitions)
+    run_finalize_scripts(context)
+
     normalize_mtime(context.root, context.config.source_date_epoch, directory=Path("boot"))
     normalize_mtime(context.root, context.config.source_date_epoch, directory=Path("efi"))
     partitions = make_disk(context, msg="Formatting ESP/XBOOTLDR partitions")
@@ -4508,7 +4509,7 @@ def run_serve(args: Args, config: Config) -> None:
 def generate_key_cert_pair(args: Args) -> None:
     """Generate a private key and accompanying X509 certificate using openssl"""
 
-    keylength = 2048
+    keylength = 4096
     expiration_date = datetime.date.today() + datetime.timedelta(int(args.genkey_valid_days))
 
     configdir = finalize_configdir(args.directory)
@@ -4543,6 +4544,10 @@ def generate_key_cert_pair(args: Args) -> None:
             "-out", configdir / "mkosi.crt",
             "-days", str(args.genkey_valid_days),
             "-subj", f"/CN={args.genkey_common_name}/",
+            "-addext=basicConstraints=critical,CA:FALSE",
+            "-addext=keyUsage=digitalSignature",
+            "-addext=subjectKeyIdentifier=hash",
+            "-addext=authorityKeyIdentifier=keyid",
             "-nodes"
         ],
         env=dict(OPENSSL_CONF="/dev/null"),
