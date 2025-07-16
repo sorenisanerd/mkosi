@@ -87,6 +87,7 @@ class Verb(StrEnum):
     dependencies = enum.auto()
     completion = enum.auto()
     sysupdate = enum.auto()
+    box = enum.auto()
     sandbox = enum.auto()
     init = enum.auto()
 
@@ -104,12 +105,13 @@ class Verb(StrEnum):
             Verb.completion,
             Verb.documentation,
             Verb.sysupdate,
+            Verb.box,
             Verb.sandbox,
             Verb.dependencies,
         )
 
     def needs_tools(self) -> bool:
-        return self in (Verb.sandbox, Verb.journalctl, Verb.coredumpctl, Verb.ssh)
+        return self in (Verb.box, Verb.sandbox, Verb.journalctl, Verb.coredumpctl, Verb.ssh)
 
     def needs_build(self) -> bool:
         return self in (
@@ -477,10 +479,11 @@ class Architecture(StrEnum):
 
     def to_efi(self) -> Optional[str]:
         return {
-            Architecture.x86_64:      "x64",
             Architecture.x86:         "ia32",
-            Architecture.arm64:       "aa64",
+            Architecture.x86_64:      "x64",
             Architecture.arm:         "arm",
+            Architecture.arm64:       "aa64",
+            Architecture.riscv32:     "riscv32",
             Architecture.riscv64:     "riscv64",
             Architecture.loongarch64: "loongarch64",
         }.get(self)  # fmt: skip
@@ -636,6 +639,8 @@ class ToolsTreeProfile(StrEnum):
 
 class InitrdProfile(StrEnum):
     lvm = enum.auto()
+    network = enum.auto()
+    nfs = enum.auto()
     pkcs11 = enum.auto()
     plymouth = enum.auto()
     raid = enum.auto()
@@ -675,8 +680,8 @@ def parse_boolean(s: str) -> bool:
     return value
 
 
-def in_sandbox() -> bool:
-    return parse_boolean(os.getenv("MKOSI_IN_SANDBOX", "0"))
+def in_box() -> bool:
+    return parse_boolean(os.getenv("MKOSI_IN_BOX", "0"))
 
 
 def parse_path(
@@ -1101,6 +1106,13 @@ def config_make_enum_matcher(type: type[SE]) -> ConfigMatchCallback[SE]:
     return config_match_enum
 
 
+def config_match_architecture(match: str, value: Architecture) -> bool:
+    if match == "uefi":
+        return value.to_efi() is not None
+
+    return config_make_enum_matcher(Architecture)(match, value)
+
+
 def package_sort_key(package: str) -> tuple[int, str]:
     """Sorts packages: normal first, paths second, conditional third"""
 
@@ -1479,7 +1491,7 @@ def config_parse_minimum_version(value: Optional[str], old: Optional[str]) -> Op
         return old
 
     if hash := startswith(value, "commit:"):
-        if not in_sandbox():
+        if not in_box():
             gitdir = Path(__file__).parent.parent
             if not (gitdir / ".git").exists():
                 die("Cannot check mkosi git version, not running mkosi from a git repository")
@@ -2175,7 +2187,7 @@ class Config:
         return self.package_cache_dir or (INVOKING_USER.cache_dir() / "mkosi" / key)
 
     def tools(self) -> Path:
-        if in_sandbox():
+        if in_box():
             return Path("/")
 
         return self.tools_tree or Path("/")
@@ -2310,8 +2322,8 @@ class Config:
             # Caching the package manager used does not matter for the default tools tree because we don't
             # cache the package manager metadata for the tools tree either. In fact, it can cause issues as
             # the cache manifest for the tools tree will sometimes be different depending on whether we're
-            # running inside or outside of the mkosi sandbox. To avoid these issues, don't cache the package
-            # manager used in the tools tree cache manifest.
+            # running inside or outside of the mkosi box environment. To avoid these issues, don't cache the
+            # package manager used in the tools tree cache manifest.
             **(
                 {"package_manager": self.distribution.package_manager(self).executable(self)}
                 if self.image != "tools"
@@ -2319,6 +2331,7 @@ class Config:
             ),
             "packages": sorted(self.packages),
             "build_packages": sorted(self.build_packages),
+            "remove_packages": sorted(self.remove_packages),
             "package_directories": [
                 (p.name, p.stat().st_mtime_ns)
                 for d in self.package_directories
@@ -2630,7 +2643,7 @@ SETTINGS: list[ConfigSetting[Any]] = [
         section="Distribution",
         specifier="a",
         parse=config_make_enum_parser(Architecture),
-        match=config_make_enum_matcher(Architecture),
+        match=config_match_architecture,
         default=Architecture.native(),
         choices=Architecture.choices(),
         help="Override the architecture of installation",
@@ -5134,7 +5147,7 @@ def parse_config(
                 history.pop(s.dest, None)
                 continue
 
-            if s.dest in context.cli and context.cli[s.dest] != history[s.dest]:
+            if s.dest in context.cli and s.dest in history and context.cli[s.dest] != history[s.dest]:
                 logging.warning(
                     f"Ignoring {s.long} from the CLI. Run with -f to rebuild the image with this setting"
                 )
@@ -5172,7 +5185,7 @@ def parse_config(
 
     tools = None
     if config.get("tools_tree") == Path("default"):
-        if in_sandbox():
+        if in_box():
             config["tools_tree"] = Path(os.environ["MKOSI_DEFAULT_TOOLS_TREE_PATH"])
         else:
             tools = finalize_default_tools(context, config, configdir=configdir, resources=resources)

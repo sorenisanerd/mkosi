@@ -21,6 +21,7 @@ from mkosi.config import (
     OutputFormat,
     Verb,
     config_parse_bytes,
+    in_box,
     parse_config,
     parse_ini,
 )
@@ -901,6 +902,25 @@ def test_match_repositories(tmp_path: Path) -> None:
     assert config.output == "qed"
 
 
+def test_match_architecture(tmp_path: Path) -> None:
+    d = tmp_path
+
+    (d / "mkosi.conf").write_text(
+        """\
+        [Match]
+        Architecture=uefi
+
+        [Content]
+        Output=qed
+        """
+    )
+
+    with chdir(d):
+        _, _, [config] = parse_config(["--architecture", "arm64"])
+
+    assert config.output == "qed"
+
+
 @pytest.mark.parametrize("image1,image2", itertools.combinations_with_replacement(["image_a", "image_b"], 2))
 def test_match_imageid(tmp_path: Path, image1: str, image2: str) -> None:
     with chdir(tmp_path):
@@ -1485,6 +1505,9 @@ def test_cli_collection_reset(tmp_path: Path) -> None:
 def test_tools(tmp_path: Path) -> None:
     d = tmp_path
     argv = ["--tools-tree=default"]
+
+    if in_box():
+        pytest.skip("Cannot run test_tools() test within mkosi box environment")
 
     with resource_path(mkosi.resources) as resources, chdir(d):
         _, tools, _ = parse_config(argv, resources=resources)

@@ -74,7 +74,7 @@ from mkosi.config import (
     expand_delayed_specifiers,
     finalize_configdir,
     format_bytes,
-    in_sandbox,
+    in_box,
     parse_boolean,
     parse_config,
     resolve_deps,
@@ -244,18 +244,23 @@ def remove_files(context: Context) -> None:
                         t.rmdir()
 
 
+def finalize_packages(config: Config) -> list[str]:
+    s = set(config.remove_packages)
+    return [p for p in config.packages if p not in s]
+
+
 def install_distribution(context: Context) -> None:
+    packages = finalize_packages(context.config)
+
     if context.config.base_trees:
-        if not context.config.packages:
+        if not packages:
             return
 
         with complete_step(f"Installing extra packages for {context.config.distribution.pretty_name()}"):
-            context.config.distribution.package_manager(context.config).install(
-                context, context.config.packages
-            )
+            context.config.distribution.package_manager(context.config).install(context, packages)
     else:
         if context.config.overlay or context.config.output_format.is_extension_image():
-            if context.config.packages:
+            if packages:
                 die(
                     "Cannot install packages in extension images without a base tree",
                     hint="Configure a base tree with the BaseTrees= setting",
@@ -290,10 +295,8 @@ def install_distribution(context: Context) -> None:
             with umask(~0o600):
                 (context.root / "boot/loader/entries.srel").write_text("type1\n")
 
-            if context.config.packages:
-                context.config.distribution.package_manager(context.config).install(
-                    context, context.config.packages
-                )
+            if packages:
+                context.config.distribution.package_manager(context.config).install(context, packages)
 
     for f in (
         "var/lib/systemd/random-seed",
@@ -1938,20 +1941,18 @@ def finalize_cmdline(
     else:
         cmdline = []
 
+    if roothash:
+        cmdline += [roothash]
+
     cmdline += context.config.kernel_command_line
 
-    for name in ("root", "mount.usr"):
-        type_prefix = name.removeprefix("mount.")
-        if not (root := next((p.uuid for p in partitions if p.type.startswith(type_prefix)), None)):
-            continue
+    if not roothash:
+        for name in ("root", "mount.usr"):
+            type_prefix = name.removeprefix("mount.")
+            if not (root := next((p.uuid for p in partitions if p.type.startswith(type_prefix)), None)):
+                continue
 
-        cmdline = [f"{name}=PARTUUID={root}" if c == f"{name}=PARTUUID" else c for c in cmdline]
-
-    if roothash and (
-        (roothash.startswith("roothash=") and not any(c.startswith("root=") for c in cmdline))
-        or (roothash.startswith("usrhash=") and not any(c.startswith("mount.usr") for c in cmdline))
-    ):
-        cmdline += [roothash]
+            cmdline = [f"{name}=PARTUUID={root}" if c == f"{name}=PARTUUID" else c for c in cmdline]
 
     return cmdline
 
@@ -1986,13 +1987,15 @@ def install_type1(
         dst.mkdir(parents=True, exist_ok=True)
         entry.parent.mkdir(parents=True, exist_ok=True)
 
-    kmods = build_kernel_modules_initrd(context, kver)
-
     dtb = None
     if context.config.devicetree:
         dtb = dst / context.config.devicetree
         with umask(~0o700):
             dtb.parent.mkdir(parents=True, exist_ok=True)
+
+    microcode = finalize_microcode(context)
+    initrds = finalize_initrds(context)
+    kmods = build_kernel_modules_initrd(context, kver)
 
     with umask(~0o600):
         if (
@@ -2006,8 +2009,7 @@ def install_type1(
             kimg = Path(shutil.copy2(context.root / kimg, dst / "vmlinuz"))
 
         initrds = [
-            Path(shutil.copy2(initrd, dst.parent / initrd.name))
-            for initrd in finalize_microcode(context) + finalize_initrds(context)
+            Path(shutil.copy2(initrd, dst.parent / initrd.name)) for initrd in microcode + initrds
         ]
 
         if context.config.kernel_modules_initrd:
@@ -3463,7 +3465,7 @@ def make_image(
 
     if split:
         for p in partitions:
-            if p.split_path:
+            if p.split_path and p.type not in skip:
                 maybe_compress(context, context.config.compress_output, p.split_path)
 
     if ArtifactOutput.roothash in context.config.split_artifacts and (
@@ -4120,11 +4122,11 @@ def build_image(context: Context) -> None:
     print_output_size(context.config.output_dir_or_cwd() / context.config.output_with_compression)
 
 
-def run_sandbox(args: Args, config: Config) -> None:
-    if in_sandbox():
+def run_box(args: Args, config: Config) -> None:
+    if in_box():
         die(
-            "mkosi sandbox cannot be invoked from within another mkosi sandbox environment",
-            hint="Exit the current sandbox environment and try again",
+            "mkosi box cannot be invoked from within another mkosi box environment",
+            hint="Exit the current mkosi box environment and try again",
         )
 
     if not args.cmdline:
@@ -4132,13 +4134,10 @@ def run_sandbox(args: Args, config: Config) -> None:
 
     mounts = finalize_certificate_mounts(config, relaxed=True)
 
-    if config.tools() != Path("/") and (config.tools() / "etc/crypto-policies").exists():
-        mounts += ["--ro-bind", config.tools() / "etc/crypto-policies", Path("/etc/crypto-policies")]
-
-    # Since we reuse almost every top level directory from the host except /usr, the crypto mountpoints
-    # have to exist already in these directories or we'll fail with a permission error. Let's check this
-    # early and show a better error and a suggestion on how users can fix this issue. We use slice
-    # notation to get every 3rd item from the mounts list which is the destination path.
+    # Since we reuse almost every top level directory from the host except /usr and /etc, the crypto
+    # mountpoints have to exist already in these directories or we'll fail with a permission error. Let's
+    # check this early and show a better error and a suggestion on how users can fix this issue. We use
+    # slice notation to get every 3rd item from the mounts list which is the destination path.
     for dst in mounts[2::3]:
         if not Path(dst).exists():
             die(
@@ -4148,7 +4147,7 @@ def run_sandbox(args: Args, config: Config) -> None:
 
     hd, hr = detect_distribution()
 
-    env = {"MKOSI_IN_SANDBOX": "1"}
+    env = {"MKOSI_IN_BOX": "1"}
     if hd:
         env |= {"MKOSI_HOST_DISTRIBUTION": str(hd)}
     if hr:
@@ -4956,6 +4955,22 @@ def run_build(
         )
 
 
+def ensure_tools_tree_has_etc_resolv_conf(config: Config) -> None:
+    if not config.tools_tree:
+        return
+
+    # We can't bind mount in the hosts's /etc/resolv.conf if this file doesn't exist without making the
+    # entirety of /etc writable or messing around with overlayfs, so let's just ensure it exists.
+    path = config.tools_tree / "etc/resolv.conf"
+
+    if not path.is_symlink() and not path.exists():
+        die(
+            f"Tools tree {config.tools_tree} is missing /etc/resolv.conf",
+            hint="If you're using a default tools tree, run mkosi -f clean to remove the old tools tree "
+            "without /etc/resolv.conf",
+        )
+
+
 def run_verb(args: Args, tools: Optional[Config], images: Sequence[Config], *, resources: Path) -> None:
     images = list(images)
 
@@ -5059,9 +5074,9 @@ def run_verb(args: Args, tools: Optional[Config], images: Sequence[Config], *, r
 
         run_clean(args, tools)
 
+        ensure_directories_exist(tools)
         run_sync_scripts(tools)
         check_tools(tools, Verb.build)
-        ensure_directories_exist(tools)
 
         with (
             tempfile.TemporaryDirectory(
@@ -5089,15 +5104,22 @@ def run_verb(args: Args, tools: Optional[Config], images: Sequence[Config], *, r
                 metadata_dir=Path(metadata_dir),
             )
 
+        resolv = tools.output_dir_or_cwd() / tools.output / "etc/resolv.conf"
+        if not resolv.is_symlink() and not resolv.exists():
+            resolv.touch()
+
         _, _, manifest = cache_tree_paths(tools)
         manifest.write_text(dump_json(tools.cache_manifest()))
+
+    ensure_tools_tree_has_etc_resolv_conf(last)
 
     if args.verb.needs_tools():
         return {
             Verb.ssh: run_ssh,
             Verb.journalctl: run_journalctl,
             Verb.coredumpctl: run_coredumpctl,
-            Verb.sandbox: run_sandbox,
+            Verb.box: run_box,
+            Verb.sandbox: run_box,
         }[args.verb](args, last)
 
     if last.output_format == OutputFormat.none:
@@ -5236,6 +5258,7 @@ def run_verb(args: Args, tools: Optional[Config], images: Sequence[Config], *, r
             ) as package_dir,
         ):
             for config in images:
+                ensure_directories_exist(config)
                 run_sync_scripts(config)
 
             synced = False
@@ -5251,7 +5274,6 @@ def run_verb(args: Args, tools: Optional[Config], images: Sequence[Config], *, r
 
                 check_tools(config, Verb.build)
                 check_inputs(config)
-                ensure_directories_exist(config)
 
                 if not synced:
                     sync_repository_metadata(

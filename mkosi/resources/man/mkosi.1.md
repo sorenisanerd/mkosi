@@ -30,7 +30,7 @@ mkosi — Build Bespoke OS Images
 
 `mkosi [options…] sysupdate [-- sysupdate settings…]`
 
-`mkosi [options…] sandbox [-- command line…]`
+`mkosi [options…] box [-- command line…]`
 
 `mkosi [options…] dependencies [-- options…]`
 
@@ -143,8 +143,8 @@ The following command line verbs are known:
     specified after the `sysupdate` verb and separated from the regular
     options with `--` are passed directly to **systemd-sysupdate**.
 
-`sandbox`
-:   Run arbitrary commands inside of the same sandbox used to execute
+`box`
+:   Run arbitrary commands inside of the same environment used to execute
     other verbs such as `boot`, `shell`, `vm` and more. This means
     `/usr` will be replaced by `/usr` from the tools tree if one is used
     while everything else will remain in place. If no command is provided,
@@ -1053,6 +1053,9 @@ boolean argument: either `1`, `yes`, or `true` to enable, or `0`, `no`,
     disabled.
 
     The `lvm` profile enables support for LVM.
+    The `network` profile enables support for network via **systemd-networkd**.
+    The `nfs` profile enables support for NFS. It requires networking in the
+    initrd, using the `network` profile, or some other custom method.
     The `pkcs11` profile enables support for PKCS#11.
     The `plymouth` profile provides a graphical interface at boot (animation and
     password prompt).
@@ -1727,7 +1730,7 @@ boolean argument: either `1`, `yes`, or `true` to enable, or `0`, `no`,
     `linux` otherwise.
 
 `FirmwareVariables=`, `--firmware-variables=`
-:   Configures the path to the the virtual machine firmware variables file
+:   Configures the path to the virtual machine firmware variables file
     to use. Currently, this option is only taken into account when the `uefi`
     or `uefi-secure-boot` firmware is used. If not specified, **mkosi** will search
     for the default variables file and use that instead.
@@ -1984,6 +1987,8 @@ boolean argument: either `1`, `yes`, or `true` to enable, or `0`, `no`,
 :   Matches against the configured architecture. If this condition is used
     and no architecture has been explicitly configured yet, the host
     architecture is used.
+
+:   `Architecture=uefi` can be used to match against any architecture that supports UEFI.
 
 `Repositories=`
 :   Matches against repositories enabled with the `Repositories=` setting.
@@ -2866,6 +2871,7 @@ tools trees:
 | `perf`                  | ✓      | ✓      | ✓      | ✓    |        | ✓    | ✓        |
 | `sed`                   | ✓      | ✓      | ✓      | ✓    | ✓      | ✓    | ✓        |
 | `pacman`                | ✓      | ✓      | ✓      | ✓    | ✓      | ✓    |          |
+| `p11-kit`               | ✓      | ✓      | ✓      | ✓    | ✓      | ✓    | ✓        |
 | `policycoreutils`       | ✓      | ✓      | ✓      | ✓    | ✓      |      | ✓        |
 | `qemu`                  | ✓      | ✓      | ✓      | ✓    | ✓      | ✓    | ✓        |
 | `sbsigntools`           | ✓      | ✓      | ✓      | ✓    | ✓      | ✓    | ✓        |
