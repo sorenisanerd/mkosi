@@ -269,3 +269,10 @@ def mandatory_variable(name: str) -> str:
         return os.environ[name]
     except KeyError:
         die(f"${name} must be set in the environment")
+
+
+def is_below_symlink(path: Path) -> bool:
+    for parent in path.parents:
+        if parent.is_symlink():
+            return True
+    return False
