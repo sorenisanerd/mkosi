@@ -4,8 +4,10 @@ description: Install mkosi
 # https://github.com/actions/runner/issues/2473
 inputs:
   action_ref:
+    description: The reference to checkout for the action
     default: ${{ github.action_ref }}
   action_repository:
+    description: The repository to checkout for the action
     default: ${{ github.action_repository }}
 runs:
   using: composite
@@ -65,6 +67,10 @@ runs:
       shell: bash
       run: |
         sudo mkdir -p /var/lib/ca-certificates
+
+    - name: Prevent man-db dpkg trigger
+      shell: bash
+      run: sudo rm /var/lib/man-db/auto-update || true
 
     # Both the unix-chkpwd and swtpm profiles are broken (https://gitlab.com/apparmor/apparmor/-/issues/402) so let's
     # just disable and remove apparmor completely. It's not relevant in this context anyway.
